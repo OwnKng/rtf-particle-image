@@ -43,8 +43,8 @@ const checkEdges = (
   }
 }
 
-const rows = 150
-const cols = 150
+const rows = 100
+const cols = 100
 const numberOfCells = rows * cols
 
 export default function Sketch() {
@@ -60,7 +60,7 @@ export default function Sketch() {
   const cellHeight = height / rows
 
   //_ vertices and index for the square shape
-  const colors = useMemo(() => {
+  const imageData = useMemo(() => {
     const img = texture.image
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")
@@ -73,7 +73,7 @@ export default function Sketch() {
     //@ts-ignore
     ctx.drawImage(img, 0, 0, width, height * -1)
 
-    const imageData = Array.from({ length: numberOfCells }, () => {
+    const imageData = Array.from({ length: numberOfCells }, (_, i) => {
       const cx = (i % cols) * cellWidth
       const cy = Math.floor(i / rows) * cellHeight
 
@@ -83,22 +83,26 @@ export default function Sketch() {
       const colors = data.filter((_, i) => (i + 1) % 4 !== 0)
 
       const averageColor =
-        1.0 - colors.reduce((acc, cur) => acc + cur, 0) / colors.length / 255
+        1.0 - colors.reduce((acc, cur) => acc + cur, 0) / colors.length
+
+      return { x: cx, y: cy, color: averageColor / 255 }
     })
 
-    return colors
+    return imageData
   }, [texture, width, height])
 
-  useFrame(() => {
+  useFrame(({ clock }) => {
     tempObject.position.set(0, 0, 0)
     tempObject.updateMatrix()
 
     const offsets = ref.current.geometry.attributes.offset.array
 
     for (let i = 0; i < numberOfCells; i++) {
-      const strength = colors[i]
+      const { x, y, color } = imageData[i]
 
-      offsets[i * 3 + 2] = strength * 10
+      offsets[i * 3 + 0] = x
+      offsets[i * 3 + 1] = y
+      offsets[i * 3 + 2] = Math.sin(clock.getElapsedTime()) * color * 10
     }
 
     ref.current.geometry.attributes.offset.needsUpdate = true
