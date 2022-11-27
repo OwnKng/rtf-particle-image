@@ -60,7 +60,7 @@ export default function Sketch() {
   const cellHeight = height / rows
 
   //_ vertices and index for the square shape
-  const [positions, colors] = useMemo(() => {
+  const colors = useMemo(() => {
     const img = texture.image
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")
@@ -73,25 +73,20 @@ export default function Sketch() {
     //@ts-ignore
     ctx.drawImage(img, 0, 0, width, height * -1)
 
-    const positions = Array.from({ length: numberOfCells }, (_, i) => ({
-      x: (i % cols) * cellWidth,
-      y: Math.floor(i / rows) * cellHeight,
-      z: 0,
-    }))
+    const imageData = Array.from({ length: numberOfCells }, () => {
+      const cx = (i % cols) * cellWidth
+      const cy = Math.floor(i / rows) * cellHeight
 
-    const colors = positions.map(({ x, y }) => {
       //@ts-ignore
-      const { data } = ctx.getImageData(x, y, cellWidth, cellHeight)
+      const { data } = ctx.getImageData(cx, cy, cellWidth, cellHeight)
 
       const colors = data.filter((_, i) => (i + 1) % 4 !== 0)
 
       const averageColor =
-        colors.reduce((acc, cur) => acc + cur, 0) / colors.length
-
-      return 1.0 - averageColor / 255
+        1.0 - colors.reduce((acc, cur) => acc + cur, 0) / colors.length / 255
     })
 
-    return [positions, colors]
+    return colors
   }, [texture, width, height])
 
   useFrame(() => {
