@@ -5,50 +5,12 @@ import * as THREE from "three"
 import vertex from "./shaders/vertex.glsl"
 import fragment from "./shaders/fragment.glsl"
 
-type particleType = {
-  acceleration: THREE.Vector3
-  velocity: THREE.Vector3
-  position: THREE.Vector3
-  maxSpeed: number
-  maxForce: number
-}
-
-const tempObject = new THREE.Object3D()
-
-const applyForce = (particle: particleType, force: THREE.Vector3) =>
-  particle.acceleration.add(force)
-
-const updatePosition = (particle: particleType) => {
-  particle.velocity.add(particle.acceleration)
-  particle.velocity.clampLength(-particle.maxSpeed, particle.maxSpeed)
-  particle.acceleration.multiplyScalar(0)
-
-  particle.position.add(particle.velocity)
-}
-
-const checkEdges = (
-  particle: particleType,
-  dimensions: { width: number; height: number }
-) => {
-  if (particle.position.x > dimensions.width) {
-    particle.position.setX(0)
-  }
-
-  if (particle.position.y > dimensions.height) {
-    particle.position.setY(0)
-  }
-
-  if (particle.position.y < 0) {
-    particle.position.setY(dimensions.height - 1)
-  }
-}
-
-const rows = 100
-const cols = 100
+const rows = 120
+const cols = 120
 const numberOfCells = rows * cols
 
-export default function Sketch() {
-  const texture = useTexture("mask.jpeg")
+export default function Sketch({ uMouse }: { uMouse: any }) {
+  const texture = useTexture("mask.png")
   let { width, height } = texture.image
 
   const ref = useRef<THREE.InstancedMesh>(null!)
@@ -60,10 +22,10 @@ export default function Sketch() {
   const cellHeight = height / rows
 
   //_ vertices and index for the square shape
-  const imageData = useMemo(() => {
+  let [imageData, angles, pindex] = useMemo(() => {
     const img = texture.image
     const canvas = document.createElement("canvas")
-    const ctx = canvas.getContext("2d")
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })
 
     canvas.width = width
     canvas.height = height
@@ -83,114 +45,101 @@ export default function Sketch() {
       const colors = data.filter((_, i) => (i + 1) % 4 !== 0)
 
       const averageColor =
-        1.0 - colors.reduce((acc, cur) => acc + cur, 0) / colors.length
+        colors.reduce((acc, cur) => acc + cur, 0) / colors.length
 
-      return { x: cx, y: cy, color: averageColor / 255 }
+      return averageColor / 255
     })
 
-    return imageData
+    const angles = Float32Array.from(
+      Array.from({ length: numberOfCells }, () => Math.random() * Math.PI)
+    )
+
+    const pindex = Float32Array.from(
+      Array.from({ length: numberOfCells }, (_, i) => i)
+    )
+
+    return [imageData, angles, pindex]
   }, [texture, width, height])
 
-  useFrame(({ clock }) => {
-    tempObject.position.set(0, 0, 0)
-    tempObject.updateMatrix()
+  let startPositions = useMemo(
+    () =>
+      Array.from({ length: imageData.length }, () => ({
+        x: THREE.MathUtils.randInt(0, width),
+        y: THREE.MathUtils.randInt(0, height),
+        z: 0,
+      })),
+    [imageData]
+  )
 
+  const offsets = useMemo(
+    () =>
+      Float32Array.from(
+        new Array(imageData.length).fill(0).flatMap(() => [0, 0, 0])
+      ),
+    [imageData]
+  )
+
+  useFrame(({ clock }) => {
     const offsets = ref.current.geometry.attributes.offset.array
 
-    for (let i = 0; i < numberOfCells; i++) {
-      const { x, y, color } = imageData[i]
+    for (let i = 0; i < imageData.length; i++) {
+      let { x, y } = startPositions[i]
 
+      const row = Math.floor(x / cellWidth)
+      const col = Math.floor(y / cellHeight)
+
+      const index = row + col * cols
+      const force = imageData[index] || 0.01
+
+      startPositions[i].y = y < 0 ? height : y - (1.0 - force)
+
+      //@ts-ignore
       offsets[i * 3 + 0] = x
+      //@ts-ignore
       offsets[i * 3 + 1] = y
-      offsets[i * 3 + 2] = Math.sin(clock.getElapsedTime()) * color * 10
+      //@ts-ignore
+      offsets[i * 3 + 2] = 0
     }
 
     ref.current.geometry.attributes.offset.needsUpdate = true
+
+    //@ts-ignore
+    ref.current.material.uniforms.uTime.value = clock.getElapsedTime()
   })
 
-  const startPositions = useMemo(
-    () =>
-      Float32Array.from(
-        new Array(numberOfCells)
-          .fill(0)
-          .flatMap(() => [Math.random() * width, Math.random() * height, 0])
-      ),
-    []
-  )
-
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, numberOfCells]}>
-      <boxGeometry>
+    <instancedMesh
+      position={[-width * 0.5, -height * 0.5, 0]}
+      ref={ref}
+      args={[undefined, undefined, imageData.length]}
+    >
+      <boxGeometry args={[0.5, 1, 0.5]}>
         <instancedBufferAttribute
           attach={"attributes-offset"}
-          array={startPositions}
+          array={offsets}
           itemSize={3}
         />
+        <instancedBufferAttribute
+          attach={"attributes-angle"}
+          array={angles}
+          itemSize={1}
+        />
+        <instancedBufferAttribute
+          attach={"attributes-pindex"}
+          array={pindex}
+          itemSize={1}
+        />
       </boxGeometry>
-      <shaderMaterial vertexShader={vertex} fragmentShader={fragment} />
+      <shaderMaterial
+        uniforms={{
+          uTexture: { value: texture },
+          uTextureSize: { value: new THREE.Vector2(width, height) },
+          uTime: { value: 0 },
+          uMouseTexture: { value: uMouse.current },
+        }}
+        vertexShader={vertex}
+        fragmentShader={fragment}
+      />
     </instancedMesh>
-  )
-}
-
-// const particles = useMemo(
-//   () =>
-//     Array.from({ length: 10000 }, () => ({
-//       position: new THREE.Vector3(
-//         Math.random() * width,
-//         Math.random() * height,
-//         0
-//       ),
-//       velocity: new THREE.Vector3(0, -0.1, 0),
-//       acceleration: new THREE.Vector3(0, 0, 0),
-//       maxSpeed: 1,
-//       maxForce: 1,
-//     })),
-//   []
-// )
-
-const Particle = ({
-  particle,
-  flowField,
-  width,
-  height,
-}: {
-  particle: particleType
-  flowField: THREE.Vector3[]
-  width: number
-  height: number
-}) => {
-  const ref = useRef<THREE.Mesh>(null!)
-
-  const follow = () => {
-    const x = Math.floor(particle.position.x / (width / cols))
-    const y = Math.floor(particle.position.y / (height / rows))
-
-    const index = x + y * cols
-
-    const force = flowField[index] || new THREE.Vector3(0, 0, 0)
-    force.clampLength(-particle.maxForce, particle.maxForce)
-    particle.maxSpeed = force.x
-
-    applyForce(particle, new THREE.Vector3(0, -1, 0))
-
-    const color1 = new THREE.Color(0xffffff)
-    const color2 = new THREE.Color(0x000000)
-
-    ref.current.material.color.lerpColors(color1, color2, particle.maxSpeed)
-  }
-
-  useFrame(() => {
-    follow()
-    updatePosition(particle)
-    checkEdges(particle, { width, height })
-
-    ref.current.position.copy(particle.position)
-  })
-
-  return (
-    <mesh ref={ref}>
-      <boxGeometry />
-      <meshBasicMaterial />
-    </mesh>
   )
 }
