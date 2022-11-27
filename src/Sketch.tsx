@@ -2,6 +2,8 @@ import { useTexture } from "@react-three/drei"
 import { useFrame } from "@react-three/fiber"
 import { useMemo, useRef } from "react"
 import * as THREE from "three"
+import vertex from "./shaders/vertex.glsl"
+import fragment from "./shaders/fragment.glsl"
 
 type particleType = {
   acceleration: THREE.Vector3
@@ -10,6 +12,8 @@ type particleType = {
   maxSpeed: number
   maxForce: number
 }
+
+const tempObject = new THREE.Object3D()
 
 const applyForce = (particle: particleType, force: THREE.Vector3) =>
   particle.acceleration.add(force)
@@ -39,15 +43,15 @@ const checkEdges = (
   }
 }
 
-const rows = 100
-const cols = 100
+const rows = 150
+const cols = 150
 const numberOfCells = rows * cols
 
 export default function Sketch() {
   const texture = useTexture("mask.jpeg")
   let { width, height } = texture.image
 
-  const spotLight = useRef<THREE.SpotLight>(null!)
+  const ref = useRef<THREE.InstancedMesh>(null!)
 
   width *= 0.5
   height *= 0.5
@@ -56,7 +60,7 @@ export default function Sketch() {
   const cellHeight = height / rows
 
   //_ vertices and index for the square shape
-  const colors = useMemo(() => {
+  const [positions, colors] = useMemo(() => {
     const img = texture.image
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")
@@ -69,65 +73,81 @@ export default function Sketch() {
     //@ts-ignore
     ctx.drawImage(img, 0, 0, width, height * -1)
 
-    return Array.from({ length: numberOfCells }, (_, i) => {
-      const cx = (i % cols) * cellWidth
-      const cy = Math.floor(i / rows) * cellHeight
+    const positions = Array.from({ length: numberOfCells }, (_, i) => ({
+      x: (i % cols) * cellWidth,
+      y: Math.floor(i / rows) * cellHeight,
+      z: 0,
+    }))
 
+    const colors = positions.map(({ x, y }) => {
       //@ts-ignore
-      const { data } = ctx.getImageData(cx, cy, cellWidth, cellHeight)
+      const { data } = ctx.getImageData(x, y, cellWidth, cellHeight)
 
       const colors = data.filter((_, i) => (i + 1) % 4 !== 0)
 
       const averageColor =
         colors.reduce((acc, cur) => acc + cur, 0) / colors.length
 
-      return new THREE.Vector3(1.0 - averageColor / 255, 0, 0)
+      return 1.0 - averageColor / 255
     })
+
+    return [positions, colors]
   }, [texture, width, height])
 
-  const particles = useMemo(
+  useFrame(() => {
+    tempObject.position.set(0, 0, 0)
+    tempObject.updateMatrix()
+
+    const offsets = ref.current.geometry.attributes.offset.array
+
+    for (let i = 0; i < numberOfCells; i++) {
+      const strength = colors[i]
+
+      offsets[i * 3 + 2] = strength * 10
+    }
+
+    ref.current.geometry.attributes.offset.needsUpdate = true
+  })
+
+  const startPositions = useMemo(
     () =>
-      Array.from({ length: 10000 }, () => ({
-        position: new THREE.Vector3(
-          Math.random() * width,
-          Math.random() * height,
-          0
-        ),
-        velocity: new THREE.Vector3(0, -0.1, 0),
-        acceleration: new THREE.Vector3(0, 0, 0),
-        maxSpeed: 1,
-        maxForce: 1,
-      })),
+      Float32Array.from(
+        new Array(numberOfCells)
+          .fill(0)
+          .flatMap(() => [Math.random() * width, Math.random() * height, 0])
+      ),
     []
   )
 
-  useFrame(({ scene }) => {
-    scene.add(spotLight.current.target)
-
-    spotLight.current.target.position.lerp(
-      new THREE.Vector3(width / 2, height / 2, 0),
-      0.05
-    )
-  })
-
   return (
-    <>
-      {/* <ambientLight /> */}
-      <spotLight ref={spotLight} position={[0, 100, 100]} />
-      <group>
-        {particles.map((p, i) => (
-          <Particle
-            key={`particle-${i}`}
-            width={width}
-            height={height}
-            flowField={colors}
-            particle={p}
-          />
-        ))}
-      </group>
-    </>
+    <instancedMesh ref={ref} args={[undefined, undefined, numberOfCells]}>
+      <boxGeometry>
+        <instancedBufferAttribute
+          attach={"attributes-offset"}
+          array={startPositions}
+          itemSize={3}
+        />
+      </boxGeometry>
+      <shaderMaterial vertexShader={vertex} fragmentShader={fragment} />
+    </instancedMesh>
   )
 }
+
+// const particles = useMemo(
+//   () =>
+//     Array.from({ length: 10000 }, () => ({
+//       position: new THREE.Vector3(
+//         Math.random() * width,
+//         Math.random() * height,
+//         0
+//       ),
+//       velocity: new THREE.Vector3(0, -0.1, 0),
+//       acceleration: new THREE.Vector3(0, 0, 0),
+//       maxSpeed: 1,
+//       maxForce: 1,
+//     })),
+//   []
+// )
 
 const Particle = ({
   particle,
@@ -171,7 +191,7 @@ const Particle = ({
   return (
     <mesh ref={ref}>
       <boxGeometry />
-      <meshPhongMaterial />
+      <meshBasicMaterial />
     </mesh>
   )
 }
